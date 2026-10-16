@@ -1,5 +1,7 @@
 # native-vtable
 
+**BE WARNED: AI was used heavily in the creation of this. This was used for a modding project, and should likely not be used elsewhere.**
+
 Traits and ordinary trait implementations for native primary vtables. The
 runtime is `no_std`, uses no allocator, and leaves object structs unchanged.
 
@@ -90,7 +92,6 @@ pub unsafe trait NativeVtable {
     #[vtable(offset = 0x18)]
     unsafe fn update(&mut self, progress: f32);
 }
-# fn main() {}
 ```
 
 The interval at `0x08..0x18` becomes an opaque `[usize; 2]` field. It is copied
@@ -120,7 +121,6 @@ pub mod ui {
         unsafe fn update(&mut self);
     }
 }
-# fn main() {}
 ```
 
 The final path segment must name the trait; do not include `crate::`.
