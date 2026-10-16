@@ -1,0 +1,11 @@
+[package]
+name = "native-vtable"
+version = "0.0.1"
+edition = "2024"
+
+[workspace]
+members = ["macros", "tests/interface-crate", "tests/consumer-crate"]
+exclude = ["skyline-check"]
+
+[dependencies]
+native-vtable-macros = { path = "macros" }

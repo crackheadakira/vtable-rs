@@ -1,0 +1,12 @@
+[package]
+name = "native-vtable-macros"
+version = "0.0.1"
+edition = "2024"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "=2.0.118", features = ["full", "extra-traits"] }
+quote = "=1.0.47"
+proc-macro2 = "=1.0.106"
