@@ -5,19 +5,14 @@ pub use native_vtable_macros::{__expand, native, vtable, vtable_impl};
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-/// Maps a native symbol name to its absolute address. Supplied by the caller of
-/// [`native`], so this crate stays independent of how addresses are found.
 pub type Resolver = fn(&'static str) -> Option<usize>;
 
-/// A native function whose symbol the resolver could not supply.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("unresolved native symbol: {symbol}")]
 pub struct Unresolved {
     pub symbol: &'static str,
 }
 
-/// The cached address of one [`native`] function. Resolved on first use; a
-/// failed lookup is retried on the next call.
 #[doc(hidden)]
 pub struct NativeAddr(AtomicUsize);
 

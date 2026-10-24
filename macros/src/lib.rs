@@ -786,14 +786,6 @@ fn native_fn(decl: NativeDecl, resolve: &Path, in_impl: bool) -> Result<Tokens> 
     })
 }
 
-/// Binds non-virtual native functions.
-///
-/// On an inherent `impl` block, bodiless `unsafe fn` methods marked
-/// `#[native(symbol = "...")]` become calls to the address `resolve` returns for
-/// that symbol; `&self`/`&mut self` are passed as the native `this`. On an
-/// `unsafe extern "C" { ... }` block the same applies to free functions. Each
-/// function returns `Result<R, native_vtable::Unresolved>` and caches the
-/// resolved address.
 #[proc_macro_attribute]
 pub fn native(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as NativeArgs);
