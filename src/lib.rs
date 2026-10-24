@@ -10,18 +10,11 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 pub type Resolver = fn(&'static str) -> Option<usize>;
 
 /// A native function whose symbol the resolver could not supply.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("unresolved native symbol: {symbol}")]
 pub struct Unresolved {
     pub symbol: &'static str,
 }
-
-impl core::fmt::Display for Unresolved {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "unresolved native symbol: {}", self.symbol)
-    }
-}
-
-impl core::error::Error for Unresolved {}
 
 /// The cached address of one [`native`] function. Resolved on first use; a
 /// failed lookup is retried on the next call.
@@ -89,16 +82,9 @@ pub unsafe trait VTable: Sized {
 /// `Self` must match the leading bytes of `T` in size, alignment and slot types.
 pub unsafe trait PrefixOf<T: VTableLayout>: VTableLayout {}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("unresolved virtual method: {0}")]
 pub struct MissingSlot(pub &'static str);
-
-impl core::fmt::Display for MissingSlot {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "unresolved virtual method: {}", self.0)
-    }
-}
-
-impl core::error::Error for MissingSlot {}
 
 pub struct Builder<T: VTableLayout> {
     table: T,

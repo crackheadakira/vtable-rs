@@ -9,3 +9,4 @@ exclude = ["skyline-check"]
 
 [dependencies]
 native-vtable-macros = { path = "macros" }
+thiserror = { version = "2", default-features = false }
