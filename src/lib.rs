@@ -1,7 +1,60 @@
 #![no_std]
 #![doc = include_str!("../README.md")]
 
-pub use native_vtable_macros::{__expand, vtable, vtable_impl};
+pub use native_vtable_macros::{__expand, native, vtable, vtable_impl};
+
+use core::sync::atomic::{AtomicUsize, Ordering};
+
+/// Maps a native symbol name to its absolute address. Supplied by the caller of
+/// [`native`], so this crate stays independent of how addresses are found.
+pub type Resolver = fn(&'static str) -> Option<usize>;
+
+/// A native function whose symbol the resolver could not supply.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Unresolved {
+    pub symbol: &'static str,
+}
+
+impl core::fmt::Display for Unresolved {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "unresolved native symbol: {}", self.symbol)
+    }
+}
+
+impl core::error::Error for Unresolved {}
+
+/// The cached address of one [`native`] function. Resolved on first use; a
+/// failed lookup is retried on the next call.
+#[doc(hidden)]
+pub struct NativeAddr(AtomicUsize);
+
+impl NativeAddr {
+    pub const fn new() -> Self {
+        Self(AtomicUsize::new(0))
+    }
+
+    #[inline]
+    pub fn get(&self, symbol: &'static str, resolve: Resolver) -> Result<usize, Unresolved> {
+        let cached = self.0.load(Ordering::Relaxed);
+        if cached != 0 {
+            return Ok(cached);
+        }
+
+        match resolve(symbol) {
+            Some(addr) if addr != 0 => {
+                self.0.store(addr, Ordering::Relaxed);
+                Ok(addr)
+            }
+            _ => Err(Unresolved { symbol }),
+        }
+    }
+}
+
+impl Default for NativeAddr {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// A native primary table layout.
 ///

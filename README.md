@@ -110,6 +110,41 @@ destruction. These remain static trait methods with `*mut Self` or `*const Self`
 as the first argument. Direct raw pointers to `Self` are also supported in other
 arguments and return values.
 
+## Non-virtual functions
+
+`#[native]` binds direct (non-virtual) native functions by symbol name. You
+supply the resolver, so this crate does not decide how addresses are found:
+
+```rust
+use native_vtable::native;
+
+fn resolve(symbol: &'static str) -> Option<usize> {
+    // e.g. look the name up in a symbol table loaded at startup
+    None
+}
+
+#[repr(C)]
+struct Control { vptr: *const () }
+
+#[native(resolve = resolve)]
+impl Control {
+    #[native(symbol = "Lp::UI::Control::setFocusable")]
+    unsafe fn set_focusable(&mut self, player: u32, enable: bool);
+}
+
+#[native(resolve = resolve)]
+unsafe extern "C" {
+    #[native(symbol = "sead::Random::getU32")]
+    fn random_u32(this: *mut ()) -> u32;
+}
+```
+
+Methods are bodiless `unsafe fn`s; `&self` and `&mut self` are passed as the
+native `this`. Other items in the block are kept as written. Every generated
+function returns `Result<R, native_vtable::Unresolved>`: a symbol the resolver
+cannot supply is an error, never a call through null. The first successful
+lookup is cached per function; failed lookups are retried.
+
 ## Modules and crates
 
 For nested definitions, provide the canonical path relative to the crate root:

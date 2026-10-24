@@ -666,3 +666,194 @@ fn implement(chain: Vec<Entry>, i: ItemImpl) -> Result<Tokens> {
         }
     })
 }
+
+// ---------------------------------------------------------------------------
+// #[native]: non-virtual native functions resolved through a caller resolver.
+
+struct NativeArgs {
+    resolve: Path,
+}
+
+impl Parse for NativeArgs {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let key: Ident = input.parse()?;
+        if key != "resolve" {
+            return Err(Error::new(key.span(), "expected `resolve = path::to::resolver`"));
+        }
+        input.parse::<Token![=]>()?;
+        let resolve = input.parse()?;
+        if !input.is_empty() {
+            return Err(input.error("unexpected tokens after the resolver path"));
+        }
+        Ok(Self { resolve })
+    }
+}
+
+/// A bodiless method or foreign function: attributes, visibility, signature, `;`.
+struct NativeDecl {
+    attrs: Vec<Attribute>,
+    vis: Visibility,
+    sig: Signature,
+}
+
+impl Parse for NativeDecl {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let attrs = input.call(Attribute::parse_outer)?;
+        let vis = input.parse()?;
+        let sig = input.parse()?;
+        input.parse::<Token![;]>()?;
+        Ok(Self { attrs, vis, sig })
+    }
+}
+
+/// Removes the `#[native(symbol = "...")]` attribute and returns the symbol.
+fn take_symbol(attrs: &mut Vec<Attribute>, span: proc_macro2::Span) -> Result<LitStr> {
+    let mut symbol = None;
+    let mut rest = Vec::new();
+    for a in attrs.drain(..) {
+        if !a.path().is_ident("native") {
+            rest.push(a);
+            continue;
+        }
+        a.parse_nested_meta(|m| {
+            if m.path.is_ident("symbol") {
+                symbol = Some(m.value()?.parse::<LitStr>()?);
+                Ok(())
+            } else {
+                Err(m.error("expected `symbol = \"...\"`"))
+            }
+        })?;
+    }
+    *attrs = rest;
+    symbol.ok_or_else(|| Error::new(span, "missing #[native(symbol = \"...\")]"))
+}
+
+fn native_fn(decl: NativeDecl, resolve: &Path, in_impl: bool) -> Result<Tokens> {
+    let NativeDecl { mut attrs, vis, mut sig } = decl;
+    let symbol = take_symbol(&mut attrs, sig.ident.span())?;
+
+    if sig.unsafety.is_none() {
+        return Err(Error::new(sig.fn_token.span(), "native functions must be `unsafe fn`"));
+    }
+    if sig.asyncness.is_some() || sig.constness.is_some() || sig.variadic.is_some() {
+        return Err(Error::new(sig.span(), "native functions cannot be async, const or variadic"));
+    }
+    if !sig.generics.params.is_empty() {
+        return Err(Error::new(sig.generics.span(), "native functions cannot be generic"));
+    }
+    sig.abi = None;
+
+    let mut ptr_args = Vec::new();
+    let mut call_args = Vec::new();
+    for (n, input) in sig.inputs.iter_mut().enumerate() {
+        match input {
+            FnArg::Receiver(r) => {
+                if !in_impl {
+                    return Err(Error::new(r.span(), "receivers are only allowed in impl blocks"));
+                }
+                if r.reference.is_none() {
+                    return Err(Error::new(r.span(), "use `&self` or `&mut self` for native receivers"));
+                }
+                if r.mutability.is_some() {
+                    ptr_args.push(quote!(*mut Self));
+                    call_args.push(quote!(self as *mut Self));
+                } else {
+                    ptr_args.push(quote!(*const Self));
+                    call_args.push(quote!(self as *const Self));
+                }
+            }
+            FnArg::Typed(t) => {
+                let name = format_ident!("__arg{}", n);
+                *t.pat = parse_quote!(#name);
+                let ty = &t.ty;
+                ptr_args.push(quote!(#ty));
+                call_args.push(quote!(#name));
+            }
+        }
+    }
+
+    let ret = match &sig.output {
+        ReturnType::Default => quote!(()),
+        ReturnType::Type(_, t) => quote!(#t),
+    };
+    sig.output = parse_quote!(-> ::core::result::Result<#ret, ::native_vtable::Unresolved>);
+
+    Ok(quote! {
+        #(#attrs)*
+        #[allow(clippy::missing_safety_doc)]
+        #vis #sig {
+            static __ADDR: ::native_vtable::NativeAddr = ::native_vtable::NativeAddr::new();
+            let __addr = __ADDR.get(#symbol, #resolve)?;
+            let __f: unsafe extern "C" fn(#(#ptr_args),*) -> #ret =
+                unsafe { ::core::mem::transmute::<usize, _>(__addr) };
+            ::core::result::Result::Ok(unsafe { __f(#(#call_args),*) })
+        }
+    })
+}
+
+/// Binds non-virtual native functions.
+///
+/// On an inherent `impl` block, bodiless `unsafe fn` methods marked
+/// `#[native(symbol = "...")]` become calls to the address `resolve` returns for
+/// that symbol; `&self`/`&mut self` are passed as the native `this`. On an
+/// `unsafe extern "C" { ... }` block the same applies to free functions. Each
+/// function returns `Result<R, native_vtable::Unresolved>` and caches the
+/// resolved address.
+#[proc_macro_attribute]
+pub fn native(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let args = parse_macro_input!(attr as NativeArgs);
+    let item: Item = parse_macro_input!(item as Item);
+
+    let result = match item {
+        Item::Impl(mut i) => {
+            if i.trait_.is_some() {
+                return error(Error::new(i.span(), "#[native] needs an inherent impl block"));
+            }
+            let mut items = Vec::new();
+            let mut err: Option<Error> = None;
+            for it in std::mem::take(&mut i.items) {
+                let tokens = match it {
+                    ImplItem::Verbatim(v) => syn::parse2::<NativeDecl>(v)
+                        .and_then(|d| native_fn(d, &args.resolve, true)),
+                    other => Ok(quote!(#other)),
+                };
+                match tokens {
+                    Ok(t) => items.push(t),
+                    Err(e) => match &mut err {
+                        Some(all) => all.combine(e),
+                        None => err = Some(e),
+                    },
+                }
+            }
+            if let Some(e) = err {
+                return error(e);
+            }
+            let ItemImpl { attrs, impl_token, generics, self_ty, .. } = &i;
+            let (ig, _, wc) = generics.split_for_impl();
+            Ok(quote!(#(#attrs)* #impl_token #ig #self_ty #wc { #(#items)* }))
+        }
+        Item::ForeignMod(m) => m
+            .items
+            .into_iter()
+            .map(|it| match it {
+                ForeignItem::Fn(f) => {
+                    let mut sig = f.sig;
+                    sig.unsafety = Some(Default::default());
+                    native_fn(
+                        NativeDecl { attrs: f.attrs, vis: f.vis, sig },
+                        &args.resolve,
+                        false,
+                    )
+                }
+                other => Err(Error::new(other.span(), "only functions are supported")),
+            })
+            .collect::<Result<Vec<_>>>()
+            .map(|fns| quote!(#(#fns)*)),
+        other => Err(Error::new(
+            other.span(),
+            "#[native] goes on an inherent impl block or an extern block",
+        )),
+    };
+
+    result.unwrap_or_else(Error::into_compile_error).into()
+}
