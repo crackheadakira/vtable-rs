@@ -667,9 +667,6 @@ fn implement(chain: Vec<Entry>, i: ItemImpl) -> Result<Tokens> {
     })
 }
 
-// ---------------------------------------------------------------------------
-// #[native]: non-virtual native functions resolved through a caller resolver.
-
 struct NativeArgs {
     resolve: Path,
 }
@@ -689,7 +686,6 @@ impl Parse for NativeArgs {
     }
 }
 
-/// A bodiless method or foreign function: attributes, visibility, signature, `;`.
 struct NativeDecl {
     attrs: Vec<Attribute>,
     vis: Visibility,
@@ -706,7 +702,6 @@ impl Parse for NativeDecl {
     }
 }
 
-/// Removes the `#[native(symbol = "...")]` attribute and returns the symbol.
 fn take_symbol(attrs: &mut Vec<Attribute>, span: proc_macro2::Span) -> Result<LitStr> {
     let mut symbol = None;
     let mut rest = Vec::new();
